@@ -1,15 +1,60 @@
+import requests
+
 def get_user_input():
     config = {}
 
     # Ask questions and store answers
+    config['api_key'] = input("Enter the Meraki API key: ")
     config['organization_id'] = input("Enter the organization ID: ")
     config['network_id'] = input("Enter the network ID: ")
-    config['device_serial'] = input("Enter the device serial number: ")
 
     # Ask for device configuration details
+    config['device_serial'] = input("Enter the device serial number: ")
     config['device_name'] = input("Enter the device name: ")
-    config['device_tags'] = input("Enter the device tags (comma-separated): ")
-    config['static_ip'] = input("Enter the static IP address (leave blank if DHCP): ")
+
+    # VLAN configuration
+    config['vlans'] = []
+    add_vlans = input("Do you want to add VLANs? (yes/no): ").lower()
+    if add_vlans == 'yes':
+        while True:
+            vlan = {}
+            vlan['id'] = input("Enter VLAN ID: ")
+            vlan['name'] = input("Enter VLAN name: ")
+            vlan['subnet'] = input("Enter VLAN subnet: ")
+            vlan['appliance_ip'] = input("Enter VLAN appliance IP: ")
+            config['vlans'].append(vlan)
+
+            more_vlans = input("Do you want to add another VLAN? (yes/no): ").lower()
+            if more_vlans != 'yes':
+                break
+
+    # Port speed configuration
+    config['port_speeds'] = []
+    configure_port_speeds = input("Do you want to configure port speeds? (yes/no): ").lower()
+    if configure_port_speeds == 'yes':
+        while True:
+            port_speed = {}
+            port_speed['port_id'] = input("Enter the port ID for speed configuration: ")
+            port_speed['speed'] = input("Enter the port speed (e.g., 1000): ")
+            config['port_speeds'].append(port_speed)
+
+            more_speeds = input("Do you want to configure another port speed? (yes/no): ").lower()
+            if more_speeds != 'yes':
+                break
+
+    # Port enable/disable configuration
+    config['port_status'] = []
+    configure_port_status = input("Do you want to enable/disable ports? (yes/no): ").lower()
+    if configure_port_status == 'yes':
+        while True:
+            port_status = {}
+            port_status['port_id'] = input("Enter the port ID to enable/disable: ")
+            port_status['enabled'] = input("Enter the status (enable/disable): ").lower() == 'enable'
+            config['port_status'].append(port_status)
+
+            more_status = input("Do you want to configure another port status? (yes/no): ").lower()
+            if more_status != 'yes':
+                break
 
     # Optional firewall rules
     add_firewall_rules = input("Do you want to add firewall rules? (yes/no): ").lower()
@@ -38,7 +83,7 @@ def generate_meraki_script(config):
 import requests
 
 # Define Meraki API key and base URL
-API_KEY = 'YOUR_MERAKI_API_KEY'
+API_KEY = '{config['api_key']}'
 BASE_URL = 'https://api.meraki.com/api/v1'
 
 headers = {{
@@ -46,24 +91,61 @@ headers = {{
     'Content-Type': 'application/json'
 }}
 
-# Set device details
-organization_id = '{config['organization_id']}'
-network_id = '{config['network_id']}'
-device_serial = '{config['device_serial']}'
+# Initial cleanup commands
+cleanup_commands = [
+    ("DELETE", f"/organizations/{{config['organization_id']}}/networks/{{config['network_id']}}/firewall/l3FirewallRules"),
+    ("DELETE", f"/organizations/{{config['organization_id']}}/networks/{{config['network_id']}}/vlans")
+]
 
-# Update device details
-device_url = f"{{BASE_URL}}/networks/{{network_id}}/devices/{{device_serial}}"
+for method, endpoint in cleanup_commands:
+    url = f"{{BASE_URL}}{{endpoint}}"
+    response = requests.request(method, url, headers=headers)
+    print(f"Cleanup command for endpoint '{{endpoint}}' response: {{response.status_code}}")
+
+# Set device details
+device_url = f"{{BASE_URL}}/networks/{{config['network_id']}}/devices/{{config['device_serial']}}"
 device_payload = {{
-    'name': '{config['device_name']}',
-    'tags': '{config['device_tags']}',
-    'staticIp': '{config['static_ip']}'
+    'name': '{config['device_name']}'
 }}
 response = requests.put(device_url, headers=headers, json=device_payload)
 print(f"Device update response: {{response.status_code}}")
 
-# Update firewall rules if any
+# Configure VLANs
+if {len(config['vlans'])} > 0:
+    for vlan in config['vlans']:
+        vlan_url = f"{{BASE_URL}}/networks/{{config['network_id']}}/vlans"
+        vlan_payload = {{
+            'id': vlan['id'],
+            'name': vlan['name'],
+            'subnet': vlan['subnet'],
+            'applianceIp': vlan['appliance_ip']
+        }}
+        response = requests.post(vlan_url, headers=headers, json=vlan_payload)
+        print(f"VLAN configuration response for VLAN {{vlan['id']}}: {{response.status_code}}")
+
+# Configure port speeds
+if {len(config['port_speeds'])} > 0:
+    for port_speed in config['port_speeds']:
+        port_url = f"{{BASE_URL}}/networks/{{config['network_id']}}/devices/{{config['device_serial']}}/switchPorts/{{port_speed['port_id']}}"
+        port_payload = {{
+            'speed': '{port_speed['speed']}'
+        }}
+        response = requests.put(port_url, headers=headers, json=port_payload)
+        print(f"Port speed configuration response for port {{port_speed['port_id']}}: {{response.status_code}}")
+
+# Enable/disable ports
+if {len(config['port_status'])} > 0:
+    for port_status in config['port_status']:
+        port_url = f"{{BASE_URL}}/networks/{{config['network_id']}}/devices/{{config['device_serial']}}/switchPorts/{{port_status['port_id']}}"
+        port_payload = {{
+            'enabled': {str(port_status['enabled']).lower()}
+        }}
+        response = requests.put(port_url, headers=headers, json=port_payload)
+        print(f"Port status configuration response for port {{port_status['port_id']}}: {{response.status_code}}")
+
+# Configure firewall rules if any
 if {len(config['firewall_rules'])} > 0:
-    firewall_url = f"{{BASE_URL}}/networks/{{network_id}}/appliance/firewall/l3FirewallRules"
+    firewall_url = f"{{BASE_URL}}/networks/{{config['network_id']}}/firewall/l3FirewallRules"
     firewall_payload = {{
         'rules': {config['firewall_rules']}
     }}
@@ -74,10 +156,13 @@ if {len(config['firewall_rules'])} > 0:
     return script
 
 def main():
-    config = get_user_input()
-    script = generate_meraki_script(config)
-    print("Generated Meraki Script:")
-    print(script)
+    try:
+        config = get_user_input()
+        script = generate_meraki_script(config)
+        print("Generated Meraki Script:")
+        print(script)
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     main()
